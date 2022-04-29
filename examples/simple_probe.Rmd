@@ -1,0 +1,146 @@
+---
+title: An R Markdown document converted from "examples/simple_probe.ipynb"
+output: html_document
+---
+
+# NIRSimple example
+
+```{python}
+import scipy.io
+import numpy as np
+import nirsimple as ns
+```
+
+The data used in this example is from the [Homer MATLAB toolbox tutorial](https://homer-fnirs.org/documentation/) and can be downloaded [here](http://www.nmr.mgh.harvard.edu/martinos/software/homer/SampleData.zip).
+
+Download the zip archive and extract it. In this example we are just going to use `Simple_Probe.nirs` which is in the `Example1_Simple_Probe` folder of the archive.
+
+## Load data from the file
+
+Load the file as a MATLAB file:
+
+```{python}
+file_path = "C:\\Users\\wilso\\Documents\\GitHub\\NIRSimple\\SampleData\\SampleData\\Example1_Simple_Probe\\Simple_Probe"  # replace by the path to Simple_Probe.nirs
+simple_probe = scipy.io.loadmat(file_path)
+```
+
+## Get fNIRS light intensities as a numpy array
+
+Get signals from Simple Probe:
+
+```{python}
+intensities = np.swapaxes(simple_probe['d'], 0, 1)
+print("Intensity data shape: {}".format(intensities.shape))
+print("  number of channels: {}".format(intensities.shape[0]))
+print("  number of time points: {}".format(intensities.shape[1]))
+```
+
+## Convert light intensities to optical density changes
+
+Get optical density changes relative to the average intensity of each channel:
+
+```{python}
+dod = ns.intensities_to_od_changes(intensities)
+print("Delta OD shape: {}".format(dod.shape))
+```
+
+## Get channel info as lists
+
+Get channel names from Simple Probe:
+
+```{python}
+channels = simple_probe['SD']['MeasList'][0, 0][:, :2].tolist()
+raw_ch_names = [str(ch).replace('[', '').replace(']', '').replace(', ', '-')
+                for ch in channels]
+print("Channel names: {}".format(raw_ch_names))
+```
+
+---
+
+Get channel wavelengths from Simple Probe:
+
+```{python}
+wavelengths = simple_probe['SD']['Lambda'][0, 0][0].tolist()
+ch_high_wl = [wavelengths[0] for _ in range(int(len(raw_ch_names)/2))]
+ch_low_wl = [wavelengths[1] for _ in range(int(len(raw_ch_names)/2))]
+ch_wl = ch_high_wl + ch_low_wl
+print("Channel wavelengths: {}".format(ch_wl))
+```
+
+---
+
+Define the differential pathlengths factor (DPF) for each channel:
+
+```{python}
+unique_dpf = 6
+ch_dpf = [unique_dpf for _ in enumerate(raw_ch_names)]
+print("Channel DPFs: {}".format(ch_dpf))
+```
+
+---
+
+Define source-detector distance for each channel:
+
+```{python}
+unique_distance = 2.8  # cm
+ch_distances = [unique_distance for _ in enumerate(raw_ch_names)]
+print("Channel distances: {}".format(ch_distances))
+```
+
+## Convert optical density changes to concentration changes
+
+Get oxygenated and deoxygenated hemoglobin concentration changes (HbO and HbR) with the modified Beer-Lambert law (from Delpy et al., 1988):
+
+```{python}
+data = ns.mbll(dod, raw_ch_names, ch_wl, ch_dpf, ch_distances,
+               unit='cm', table='wray')
+dc, ch_names, ch_types = data
+print("Delta HbO and HbR shape: {}".format(dc.shape))
+print("Channel names: {}".format(ch_names))
+print("Channel types: {}".format(ch_types))
+```
+
+### Plot data with MNE
+
+```{python}
+import mne
+```
+
+```{python}
+S_FREQ = 5  # sampling frequency in Hz
+```
+
+Plot data with MNE:
+
+```{python}
+mne_ch_names = [ch + ' ' + ch_types[i] for i, ch in enumerate(ch_names)]
+print("MNE channel names: {}".format(mne_ch_names))
+info = mne.create_info(ch_names=mne_ch_names, sfreq=S_FREQ,
+                       ch_types=ch_types)
+raw = mne.io.RawArray(dc, info)
+graph = raw.plot(scalings=0.5e-6, duration=50)
+```
+
+## Signal correction
+
+Apply correlation based signal improvement (from Cui at al., 2010) to hemoglobin concentration changes:
+
+```{python}
+data = ns.cbsi(dc, ch_names, ch_types)
+dc_0, ch_names_0, ch_types_0 = data
+print("Delta HbO_0 and HbR_0 shape: {}".format(dc_0.shape))
+print(ch_names_0)
+```
+
+### Plot corrected data with MNE
+
+```{python}
+mne_ch_names_0 = [ch + ' ' + ch_types_0[i] + '_0'
+                  for i, ch in enumerate(ch_names_0)]
+print("MNE channel names: {}".format(mne_ch_names_0))
+info_0 = mne.create_info(ch_names=mne_ch_names_0, sfreq=S_FREQ,
+                         ch_types=ch_types_0)
+raw_0 = mne.io.RawArray(dc_0, info_0)
+graph_0 = raw_0.plot(scalings=0.5e-6, duration=50)
+```
+
